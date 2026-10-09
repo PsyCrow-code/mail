@@ -128,6 +128,44 @@ describe('Vuex store actions', () => {
 		expect(MailboxService.create).toHaveBeenCalledWith(13, 'INBOX.Archive.2020')
 	})
 
+	it('stores unread envelopes first and keeps both groups newest first', () => {
+		const account = {
+			id: 13,
+			mailboxes: [],
+		}
+
+		store.preferences['sort-order'] = 'unread'
+
+		store.addAccountMutation(account)
+		store.addMailboxMutation({
+			account,
+			mailbox: {
+				name: 'INBOX',
+				databaseId: 11,
+				specialRole: 'inbox',
+			},
+		})
+
+		const envelopes = [
+			{ ...mockEnvelope(11, 40), flags: { seen: true } },
+			{ ...mockEnvelope(11, 10), flags: { seen: false } },
+			{ ...mockEnvelope(11, 30), flags: { seen: false } },
+			{ ...mockEnvelope(11, 20), flags: { seen: true } },
+		]
+
+		store.addEnvelopesMutation({
+			envelopes,
+			addToUnifiedMailboxes: false,
+		})
+
+		expect(store.mailboxes[11].envelopeLists['']).toEqual([
+			11030,
+			11010,
+			11040,
+			11020,
+		])
+	})
+
 	it('combines unified inbox even if no inboxes are present', async () => {
 		const envelopes = await store.fetchEnvelopes({
 			mailboxId: UNIFIED_INBOX_ID,
@@ -195,6 +233,312 @@ describe('Vuex store actions', () => {
 			}],
 			query: undefined,
 		})
+	})
+
+	it('keeps the unread pagination cursor stable if the tail message is marked as read', async () => {
+		const account = {
+			id: 13,
+			mailboxes: [],
+		}
+
+		store.preferences['sort-order'] = 'unread'
+		store.preferences['layout-message-view'] = 'threaded'
+
+		store.addAccountMutation(account)
+		store.addMailboxMutation({
+			account,
+			mailbox: {
+				name: 'INBOX',
+				databaseId: 11,
+				specialRole: 'inbox',
+			},
+		})
+
+		const firstPage = [
+			{
+				...mockEnvelope(11, 30),
+				flags: { seen: false },
+			},
+			{
+				...mockEnvelope(11, 20),
+				flags: { seen: false },
+			},
+		]
+
+		MessageService.fetchEnvelopes
+			.mockResolvedValueOnce(firstPage)
+			.mockResolvedValueOnce([])
+
+		await store.fetchEnvelopes({
+			mailboxId: 11,
+		})
+
+		const tail = store.getEnvelope(11020)
+		store.flagEnvelopeMutation({
+			envelope: tail,
+			flag: 'seen',
+			value: true,
+		})
+
+		await store.fetchNextEnvelopePage({
+			mailboxId: 11,
+		})
+
+		expect(MessageService.fetchEnvelopes).toHaveBeenNthCalledWith(
+			2,
+			13,
+			11,
+			undefined,
+			200000,
+			PAGE_SIZE,
+			'unread',
+			'threaded',
+		)
+	})
+
+	it('uses a negative pagination cursor after entering the read phase', async () => {
+		const account = {
+			id: 13,
+			mailboxes: [],
+		}
+
+		store.preferences['sort-order'] = 'unread'
+		store.preferences['layout-message-view'] = 'threaded'
+
+		store.addAccountMutation(account)
+		store.addMailboxMutation({
+			account,
+			mailbox: {
+				name: 'INBOX',
+				databaseId: 11,
+				specialRole: 'inbox',
+			},
+		})
+
+		const firstPage = [
+			{
+				...mockEnvelope(11, 30),
+				flags: { seen: false },
+			},
+			{
+				...mockEnvelope(11, 20),
+				flags: { seen: true },
+			},
+		]
+
+		MessageService.fetchEnvelopes
+			.mockResolvedValueOnce(firstPage)
+			.mockResolvedValueOnce([])
+
+		await store.fetchEnvelopes({
+			mailboxId: 11,
+		})
+
+		await store.fetchNextEnvelopePage({
+			mailboxId: 11,
+		})
+
+		expect(MessageService.fetchEnvelopes).toHaveBeenNthCalledWith(
+			2,
+			13,
+			11,
+			undefined,
+			-200000,
+			PAGE_SIZE,
+			'unread',
+			'threaded',
+		)
+	})
+
+	it('paginates unread first across unified inboxes before entering the read phase', async () => {
+		const account13 = {
+			id: 13,
+		}
+		const account26 = {
+			id: 26,
+		}
+
+		store.preferences['sort-order'] = 'unread'
+		store.preferences['layout-message-view'] = 'threaded'
+
+		store.addAccountMutation(account13)
+		store.addAccountMutation(account26)
+
+		store.addMailboxMutation({
+			account: account13,
+			mailbox: {
+				name: 'INBOX',
+				databaseId: 11,
+				specialRole: 'inbox',
+			},
+		})
+		store.addMailboxMutation({
+			account: account13,
+			mailbox: {
+				name: 'Drafts',
+				databaseId: 12,
+				specialRole: 'draft',
+			},
+		})
+		store.addMailboxMutation({
+			account: account26,
+			mailbox: {
+				name: 'INBOX',
+				databaseId: 21,
+				specialRole: 'inbox',
+			},
+		})
+		store.addMailboxMutation({
+			account: account26,
+			mailbox: {
+				name: 'Drafts',
+				databaseId: 22,
+				specialRole: 'draft',
+			},
+		})
+
+		// Cuenta 13:
+		// Primera página: 20 no leídos (100 ... 81).
+		// Después ya sólo quedan leídos, incluso con fechas más nuevas.
+		const inbox11Initial = reverse(range(81, 101)).map((uid) => ({
+			...mockEnvelope(11, uid),
+			flags: { seen: false },
+		}))
+
+		const inbox11ReadPage = reverse(range(281, 301)).map((uid) => ({
+			...mockEnvelope(11, uid),
+			flags: { seen: true },
+		}))
+
+		const inbox11ReadPage2 = reverse(range(261, 281)).map((uid) => ({
+			...mockEnvelope(11, uid),
+			flags: { seen: true },
+		}))
+
+		// Cuenta 26:
+		// Un no leído y 19 leídos en la primera página.
+		const inbox21Initial = [
+			{
+				...mockEnvelope(21, 110),
+				flags: { seen: false },
+			},
+			...reverse(range(192, 211)).map((uid) => ({
+				...mockEnvelope(21, uid),
+				flags: { seen: true },
+			})),
+		]
+
+		const inbox21ReadPage = reverse(range(172, 192)).map((uid) => ({
+			...mockEnvelope(21, uid),
+			flags: { seen: true },
+		}))
+
+		const inbox21ReadPage2 = reverse(range(152, 172)).map((uid) => ({
+			...mockEnvelope(21, uid),
+			flags: { seen: true },
+		}))
+
+		MessageService.fetchEnvelopes.mockImplementation(async (
+			accountId,
+			mailboxId,
+			query,
+			cursor,
+			limit,
+			sortOrder,
+		) => {
+			expect(sortOrder).toBe('unread')
+
+			if (mailboxId === 11) {
+				if (cursor === undefined) {
+					return inbox11Initial
+				}
+				if (cursor === 810000) {
+					return inbox11ReadPage
+				}
+				if (cursor === -2810000) {
+					return inbox11ReadPage2
+				}
+			}
+
+			if (mailboxId === 21) {
+				if (cursor === undefined) {
+					return inbox21Initial
+				}
+				if (cursor === -1920000) {
+					return inbox21ReadPage
+				}
+				if (cursor === -1720000) {
+					return inbox21ReadPage2
+				}
+			}
+
+			return []
+		})
+
+		const firstPage = await store.fetchEnvelopes({
+			mailboxId: UNIFIED_INBOX_ID,
+		})
+
+		// Los 20 primeros deben ser exclusivamente no leídos:
+		// 110 de cuenta 26 + 100 ... 82 de cuenta 13.
+		expect(firstPage.map((envelope) => envelope.databaseId)).toEqual([
+			21110,
+			...reverse(range(82, 101))
+				.map(mockEnvelope(11))
+				.map((envelope) => envelope.databaseId),
+		])
+
+		expect(store.mailboxes[UNIFIED_INBOX_ID].envelopeListCursors['']).toBe(820000)
+
+		const secondPage = await store.fetchNextEnvelopePage({
+			mailboxId: UNIFIED_INBOX_ID,
+		})
+
+		// Antes de mostrar cualquier leído todavía debe aparecer el último
+		// no leído pendiente (UID 81).
+		expect(secondPage.map((envelope) => envelope.databaseId)).toEqual([
+			11081,
+			...reverse(range(282, 301))
+				.map(mockEnvelope(11))
+				.map((envelope) => envelope.databaseId),
+		])
+
+		// El último elemento de esta página ya es leído.
+		// El cursor unificado cambia a la fase negativa.
+		expect(store.mailboxes[UNIFIED_INBOX_ID].envelopeListCursors['']).toBe(-2820000)
+
+		expect(MessageService.fetchEnvelopes).toHaveBeenCalledWith(
+			13,
+			11,
+			undefined,
+			810000,
+			PAGE_SIZE,
+			'unread',
+			'threaded',
+		)
+
+		expect(MessageService.fetchEnvelopes).toHaveBeenCalledWith(
+			26,
+			21,
+			undefined,
+			-1920000,
+			PAGE_SIZE,
+			'unread',
+			'threaded',
+		)
+
+		const thirdPage = await store.fetchNextEnvelopePage({
+			mailboxId: UNIFIED_INBOX_ID,
+		})
+
+		// Ya en fase read, ningún no leído anterior puede reaparecer.
+		expect(thirdPage.map((envelope) => envelope.databaseId)).toEqual(reverse(range(262, 282))
+			.map(mockEnvelope(11))
+			.map((envelope) => envelope.databaseId))
+
+		expect(thirdPage.every((envelope) => envelope.flags.seen)).toBe(true)
+
+		expect(store.mailboxes[UNIFIED_INBOX_ID].envelopeListCursors['']).toBe(-2620000)
 	})
 
 	it('fetches the next individual page', async () => {

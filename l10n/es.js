@@ -132,6 +132,7 @@ OC.L10N.register(
     "Sorting" : "Ordenamiento",
     "Newest first" : "Más nuevas primero",
     "Oldest first" : "Más antiguas primero",
+    "Unread first" : "No leídos primero",
     "New text block" : "Nuevo bloque de texto",
     "Title of the text block" : "Título del bloque de texto",
     "Content of the text block" : "Contenido del bloque de texto",

@@ -8,7 +8,6 @@ import { t } from '@nextcloud/l10n'
 import DOMPurify from 'dompurify'
 import escapeRegExp from 'lodash/fp/escapeRegExp.js'
 import flatMapDeep from 'lodash/fp/flatMapDeep.js'
-import orderBy from 'lodash/fp/orderBy.js'
 import uniq from 'lodash/fp/uniq.js'
 import {
 	andThen,
@@ -17,11 +16,9 @@ import {
 	defaultTo,
 	filter,
 	flatten,
-	gt,
 	head,
 	identity,
 	last,
-	lt,
 	map,
 	pipe,
 	prop,
@@ -29,7 +26,6 @@ import {
 	slice,
 	sortBy,
 	tap,
-	where,
 } from 'ramda'
 import Vue from 'vue'
 import MailboxLockedError from '../../errors/MailboxLockedError.js'
@@ -115,6 +111,11 @@ import {
 	updateTextBlock,
 } from '../../service/TextBlockService.js'
 import * as ThreadService from '../../service/ThreadService.js'
+import {
+	compareEnvelopes,
+	envelopeCursor,
+	isEnvelopeAfterCursor,
+} from '../../util/envelopeSort.js'
 import { normalizedEnvelopeListId } from '../../util/normalization.js'
 import {
 	getPrioritySearchQueries,
@@ -151,17 +152,42 @@ const findIndividualMailboxes = curry((getMailboxes, specialRole) => pipe(
 ))
 
 function combineEnvelopeLists(sortOrder) {
-	if (sortOrder === 'oldest') {
-		return pipe(flatten, orderBy(prop('dateInt'), 'asc'))
+	return pipe(
+		flatten,
+		(envelopes) => [...envelopes].sort((a, b) => compareEnvelopes(sortOrder, a, b)),
+	)
+}
+
+function setEnvelopeListCursor(mailbox, query, sortOrder, envelopes, reset = false) {
+	if (sortOrder !== 'unread') {
+		return
 	}
 
-	return pipe(flatten, orderBy(prop('dateInt'), 'desc'))
+	const tail = last(envelopes)
+	if (!reset && tail === undefined) {
+		return
+	}
+
+	if (mailbox.envelopeListCursors === undefined) {
+		Vue.set(mailbox, 'envelopeListCursors', {})
+	}
+
+	Vue.set(
+		mailbox.envelopeListCursors,
+		normalizedEnvelopeListId(query),
+		tail === undefined ? undefined : envelopeCursor(sortOrder, tail),
+	)
+}
+
+function getEnvelopeListCursor(mailbox, query) {
+	return mailbox.envelopeListCursors?.[normalizedEnvelopeListId(query)]
 }
 
 const addMailboxToState = curry((mailboxes, account, mailbox) => {
 	mailbox.accountId = account.id
 	mailbox.mailboxes = []
 	Vue.set(mailbox, 'envelopeLists', {})
+	Vue.set(mailbox, 'envelopeListCursors', {})
 
 	transformMailboxName(account, mailbox)
 
@@ -739,10 +765,19 @@ export default function mainStoreActions() {
 						fetchIndividualLists,
 						andThen(combineEnvelopeLists(this.getPreference('sort-order'))),
 						andThen(sliceToPage),
-						andThen(tap((envelopes) => this.addEnvelopesMutation({
-							envelopes,
-							query,
-						}))),
+						andThen(tap((envelopes) => {
+							setEnvelopeListCursor(
+								mailbox,
+								query,
+								this.getPreference('sort-order'),
+								envelopes,
+								true,
+							)
+							this.addEnvelopesMutation({
+								envelopes,
+								query,
+							})
+						})),
 					)
 
 					return fetchUnifiedEnvelopes(this.getAccounts)
@@ -750,11 +785,20 @@ export default function mainStoreActions() {
 
 				return pipe(
 					fetchEnvelopes,
-					andThen(tap((envelopes) => this.addEnvelopesMutation({
-						query,
-						envelopes,
-						addToUnifiedMailboxes,
-					}))),
+					andThen(tap((envelopes) => {
+						setEnvelopeListCursor(
+							mailbox,
+							query,
+							this.getPreference('sort-order'),
+							envelopes,
+							true,
+						)
+						this.addEnvelopesMutation({
+							query,
+							envelopes,
+							addToUnifiedMailboxes,
+						})
+					})),
 				)(mailbox.accountId, mailboxId, query, undefined, PAGE_SIZE, this.getPreference('sort-order'), this.getPreference('layout-message-view'), includeCacheBuster ? mailbox.cacheBuster : undefined)
 			})
 		},
@@ -784,31 +828,36 @@ export default function mainStoreActions() {
 				if (mailbox.isUnified) {
 					const getIndivisualLists = curry((query, m) => this.getEnvelopes(m.databaseId, query))
 					const individualCursor = curry((query, m) => prop('dateInt', last(this.getEnvelopes(m.databaseId, query))))
-					const cursor = individualCursor(query, mailbox)
+					const sortOrder = this.getPreference('sort-order')
+					const cursor = sortOrder === 'unread'
+						? getEnvelopeListCursor(mailbox, query)
+						: individualCursor(query, mailbox)
 
 					if (cursor === undefined) {
 						throw new Error('Unified list has no tail')
 					}
-					const newestFirst = this.getPreference('sort-order') === 'newest'
+
 					const nextLocalUnifiedEnvelopes = pipe(
 						findIndividualMailboxes(this.getMailboxes, mailbox.specialRole),
 						map(getIndivisualLists(query)),
-						combineEnvelopeLists(this.getPreference('sort-order')),
-						filter(where({
-							dateInt: newestFirst ? gt(cursor) : lt(cursor),
-						})),
+						combineEnvelopeLists(sortOrder),
+						filter((envelope) => isEnvelopeAfterCursor(sortOrder, envelope, cursor)),
 						slice(0, quantity),
 					)
 					// We know the next envelopes based on local data
 					// We have to fetch individual envelopes only if it ends in the known
 					// next fetch. If it ends after, we have all the relevant data already.
 					const needsFetch = curry((query, nextEnvelopes, mb) => {
+						if (sortOrder === 'unread') {
+							return true
+						}
+
 						const c = individualCursor(query, mb)
 						if (nextEnvelopes.length < quantity) {
 							return true
 						}
 
-						if (this.getPreference('sort-order') === 'newest') {
+						if (sortOrder === 'newest') {
 							return c >= last(nextEnvelopes).dateInt
 						} else {
 							return c <= last(nextEnvelopes).dateInt
@@ -845,6 +894,7 @@ export default function mainStoreActions() {
 					}
 
 					const envelopes = nextLocalUnifiedEnvelopes(this.getAccounts)
+					setEnvelopeListCursor(mailbox, query, sortOrder, envelopes)
 					logger.debug('next unified page can be built locally and consists of ' + envelopes.length + ' envelopes', { addToUnifiedMailboxes })
 					this.addEnvelopesMutation({
 						query,
@@ -873,11 +923,19 @@ export default function mainStoreActions() {
 					mailbox.accountId,
 					mailboxId,
 					query,
-					lastEnvelope.dateInt,
+					this.getPreference('sort-order') === 'unread'
+						? getEnvelopeListCursor(mailbox, query)
+						: lastEnvelope.dateInt,
 					quantity,
 					this.getPreference('sort-order'),
 					this.getPreference('layout-message-view'),
 				).then((envelopes) => {
+					setEnvelopeListCursor(
+						mailbox,
+						query,
+						this.getPreference('sort-order'),
+						envelopes,
+					)
 					logger.debug(`fetched ${envelopes.length} messages for mailbox ${mailboxId}`, {
 						envelopes,
 						addToUnifiedMailboxes,
@@ -932,7 +990,9 @@ export default function mainStoreActions() {
 				}
 
 				const ids = this.getEnvelopes(mailboxId, query).map((env) => env.databaseId)
-				const lastTimestamp = this.getPreference('sort-order') === 'newest' ? null : this.getEnvelopes(mailboxId, query)[0]?.dateInt
+				const lastTimestamp = this.getPreference('sort-order') === 'oldest'
+					? this.getEnvelopes(mailboxId, query)[0]?.dateInt
+					: null
 				logger.debug(`mailbox sync of ${mailboxId} (${query}) has ${ids.length} known IDs. ${lastTimestamp} is the last known message timestamp`, { mailbox })
 				return syncEnvelopesExternal(mailbox.accountId, mailboxId, ids, lastTimestamp, query, init, this.getPreference('sort-order'))
 					.then((syncData) => {
@@ -2079,10 +2139,13 @@ export default function mainStoreActions() {
 				return
 			}
 
-			const idToDateInt = (id) => this.envelopes[id].dateInt
+			const orderEnvelopeIds = (ids) => [...ids].sort((a, b) => compareEnvelopes(
+				this.preferences['sort-order'],
+				this.envelopes[a],
+				this.envelopes[b],
+			))
 
 			const listId = normalizedEnvelopeListId(query)
-			const orderByDateInt = orderBy(idToDateInt, this.preferences['sort-order'] === 'newest' ? 'desc' : 'asc')
 
 			envelopes.forEach((envelope) => {
 				const mailbox = this.mailboxes[envelope.mailboxId]
@@ -2090,7 +2153,7 @@ export default function mainStoreActions() {
 				this.normalizeTags(envelope)
 				Vue.set(this.envelopes, envelope.databaseId, { ...this.envelopes[envelope.databaseId] || {}, ...envelope })
 				Vue.set(envelope, 'accountId', mailbox.accountId)
-				Vue.set(mailbox.envelopeLists, listId, uniq(orderByDateInt(this.appendOrReplaceEnvelopeId(existing, envelope))))
+				Vue.set(mailbox.envelopeLists, listId, uniq(orderEnvelopeIds(this.appendOrReplaceEnvelopeId(existing, envelope))))
 				if (!addToUnifiedMailboxes) {
 					return
 				}
@@ -2103,7 +2166,7 @@ export default function mainStoreActions() {
 						Vue.set(
 							mailbox.envelopeLists,
 							listId,
-							uniq(orderByDateInt(existing.concat([envelope.databaseId]))),
+							uniq(orderEnvelopeIds(existing.concat([envelope.databaseId]))),
 						)
 					})
 			})

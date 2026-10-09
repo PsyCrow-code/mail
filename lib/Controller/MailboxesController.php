@@ -163,7 +163,9 @@ class MailboxesController extends Controller {
 		}
 		$mailbox = $this->mailManager->getMailbox($effectiveUserId, $id);
 		$account = $this->accountService->find($effectiveUserId, $mailbox->getAccountId());
-		$order = $sortOrder === 'newest' ? IMailSearch::ORDER_NEWEST_FIRST: IMailSearch::ORDER_OLDEST_FIRST;
+		$order = $sortOrder === 'oldest'
+			? IMailSearch::ORDER_OLDEST_FIRST
+			: IMailSearch::ORDER_NEWEST_FIRST;
 
 		$this->config->setUserValue(
 			$this->userId,
