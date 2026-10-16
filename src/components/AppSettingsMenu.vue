@@ -100,6 +100,7 @@
 				<NcRadioGroup :model-value="sortOrder" :label="t('mail', 'Sorting')" @update:modelValue="onSortByDate">
 					<NcRadioGroupButton :label="t('mail', 'Newest first')" value="newest" :disabled="hasLoadingState('sort-order')" />
 					<NcRadioGroupButton :label="t('mail', 'Oldest first')" value="oldest" :disabled="hasLoadingState('sort-order')" />
+					<NcRadioGroupButton :label="t('mail', 'Unread first')" value="unread" :disabled="hasLoadingState('sort-order')" />
 				</NcRadioGroup>
 
 				<NcDialog

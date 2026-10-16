@@ -13,6 +13,8 @@ class SearchQuery {
 	/** @var int|null */
 	private $cursor;
 
+	private ?int $cursorId = null;
+
 	private bool $threaded = true;
 
 	/** @var Flag[] */
@@ -69,6 +71,14 @@ class SearchQuery {
 	 */
 	public function setCursor(int $cursor): void {
 		$this->cursor = $cursor;
+	}
+
+	public function getCursorId(): ?int {
+		return $this->cursorId;
+	}
+
+	public function setCursorId(int $cursorId): void {
+		$this->cursorId = $cursorId;
 	}
 
 	public function getThreaded(): bool {

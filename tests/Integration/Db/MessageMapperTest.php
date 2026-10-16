@@ -208,6 +208,102 @@ class MessageMapperTest extends TestCase {
 		self::assertEquals([3,2,1], $result);
 	}
 
+
+	public function testFindIdsByQueryUnreadFirstCursorWithEqualTimestamps(): void {
+		$mailbox = new Mailbox();
+		$mailbox->setId(1);
+
+		$rows = [
+			[110, 1700000300, false],
+			[109, 1700000300, false],
+			[108, 1700000300, false],
+			[107, 1700000200, false],
+			[106, 1700000100, false],
+			[210, 1700000400, true],
+			[209, 1700000300, true],
+			[208, 1700000300, true],
+			[207, 1700000300, true],
+			[206, 1700000100, true],
+		];
+
+		$byId = [];
+		$qb = $this->db->getQueryBuilder();
+
+		foreach ($rows as [$id, $timestamp, $seen]) {
+			$byId[$id] = [
+				'timestamp' => $timestamp,
+				'seen' => $seen,
+			];
+
+			$qb->insert($this->mapper->getTableName())
+				->values([
+					'id' => $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT),
+					'uid' => $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT),
+					'message_id' => $qb->createNamedParameter('<cursor-' . $id . '@example.test>'),
+					'mailbox_id' => $qb->createNamedParameter(1, IQueryBuilder::PARAM_INT),
+					'subject' => $qb->createNamedParameter('CURSOR TEST'),
+					'sent_at' => $qb->createNamedParameter($timestamp, IQueryBuilder::PARAM_INT),
+					'flag_seen' => $qb->createNamedParameter($seen, IQueryBuilder::PARAM_BOOL),
+				])
+				->executeStatement();
+		}
+
+		$expected = [
+			110, 109, 108, 107, 106,
+			210, 209, 208, 207, 206,
+		];
+
+		foreach ([1, 2, 3, 4, 5, 10] as $pageSize) {
+			$found = [];
+			$cursor = null;
+			$cursorId = null;
+
+			for ($iteration = 0; $iteration <= count($rows); $iteration++) {
+				$query = new SearchQuery();
+				$query->setThreaded(false);
+
+				if ($cursor !== null) {
+					$query->setCursor($cursor);
+					$query->setCursorId($cursorId);
+				}
+
+				$page = $this->mapper->findIdsByQuery(
+					$mailbox,
+					$query,
+					'UNREAD',
+					$pageSize
+				);
+
+				if ($page === []) {
+					break;
+				}
+
+				$found = array_merge($found, $page);
+
+				$lastId = $page[count($page) - 1];
+				$last = $byId[$lastId];
+
+				$cursor = $last['seen']
+					? -$last['timestamp']
+					: $last['timestamp'];
+
+				$cursorId = $lastId;
+			}
+
+			self::assertSame(
+				$expected,
+				$found,
+				'Unexpected order for page size ' . $pageSize
+			);
+
+			self::assertCount(
+				count($expected),
+				array_unique($found),
+				'Duplicate messages for page size ' . $pageSize
+			);
+		}
+	}
+
 	public function testFindIdsByQueryRestrictedToIds(): void {
 		$mailbox = new Mailbox();
 		$mailbox->setId(1);

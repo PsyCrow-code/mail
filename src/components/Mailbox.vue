@@ -68,6 +68,7 @@ import NoTrashMailboxConfiguredError
 import logger from '../logger.js'
 import useMainStore from '../store/mainStore.js'
 import { mailboxHasRights } from '../util/acl.js'
+import { compareEnvelopes } from '../util/envelopeSort.js'
 import { wait } from '../util/wait.js'
 
 export default {
@@ -154,7 +155,8 @@ export default {
 		},
 
 		envelopes() {
-			return this.mainStore.getEnvelopes(this.mailbox.databaseId, this.searchQuery)
+			return [...this.mainStore.getEnvelopes(this.mailbox.databaseId, this.searchQuery)]
+				.sort((a, b) => compareEnvelopes(this.sortOrder, a, b))
 		},
 
 		envelopesToShow() {
