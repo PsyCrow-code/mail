@@ -807,7 +807,13 @@ class MessageMapper extends QBMapper {
 	public function findIdsByQuery(Mailbox $mailbox, SearchQuery $query, string $sortOrder, ?int $limit, ?array $uids = null, ?array $ids = null): array {
 		$qb = $this->db->getQueryBuilder();
 
-		$select = $qb->select(['m.id', 'm.sent_at']);
+		$selectFields = ['m.id', 'm.sent_at'];
+
+		if ($sortOrder === IMailSearch::ORDER_UNREAD_FIRST) {
+			$selectFields[] = 'm.flag_seen';
+		}
+
+		$select = $qb->select($selectFields);
 
 		$select->from($this->getTableName(), 'm');
 
@@ -922,7 +928,51 @@ class MessageMapper extends QBMapper {
 			);
 		}
 
-		if ($query->getCursor() !== null && $sortOrder === IMailSearch::ORDER_NEWEST_FIRST) {
+		if ($query->getCursor() !== null && $sortOrder === IMailSearch::ORDER_UNREAD_FIRST) {
+			$cursor = $query->getCursor();
+			$timestamp = abs($cursor);
+			$olderThanCursor = $qb->expr()->lt(
+				'm.sent_at',
+				$qb->createNamedParameter($timestamp, IQueryBuilder::PARAM_INT)
+			);
+			if ($query->getCursorId() !== null) {
+				$olderThanCursor = $qb->expr()->orX(
+					$olderThanCursor,
+					$qb->expr()->andX(
+						$qb->expr()->eq('m.sent_at', $qb->createNamedParameter($timestamp, IQueryBuilder::PARAM_INT)),
+						$qb->expr()->lt('m.id', $qb->createNamedParameter($query->getCursorId(), IQueryBuilder::PARAM_INT))
+					)
+				);
+			}
+
+			if ($cursor < 0) {
+				// Negative cursor means we already entered the read-message phase.
+				$select->andWhere(
+					$qb->expr()->eq(
+						'm.flag_seen',
+						$qb->createNamedParameter(true, IQueryBuilder::PARAM_BOOL)
+					),
+					$olderThanCursor
+				);
+			} else {
+				// Continue with older unread messages, then all read messages.
+				$select->andWhere(
+					$qb->expr()->orX(
+						$qb->expr()->andX(
+							$qb->expr()->eq(
+								'm.flag_seen',
+								$qb->createNamedParameter(false, IQueryBuilder::PARAM_BOOL)
+							),
+							$olderThanCursor
+						),
+						$qb->expr()->eq(
+							'm.flag_seen',
+							$qb->createNamedParameter(true, IQueryBuilder::PARAM_BOOL)
+						)
+					)
+				);
+			}
+		} elseif ($query->getCursor() !== null && $sortOrder === IMailSearch::ORDER_NEWEST_FIRST) {
 			$select->andWhere(
 				$qb->expr()->lt('m.sent_at', $qb->createNamedParameter($query->getCursor(), IQueryBuilder::PARAM_INT))
 			);
@@ -945,8 +995,13 @@ class MessageMapper extends QBMapper {
 			$select->andWhere($qb->expr()->isNull('m2.id'));
 		}
 
-		if ($sortOrder === 'ASC') {
-			$select->orderBy('m.sent_at', $sortOrder);
+		if ($sortOrder === IMailSearch::ORDER_UNREAD_FIRST) {
+			$select
+				->orderBy('m.flag_seen', 'ASC')
+				->addOrderBy('m.sent_at', 'DESC')
+				->addOrderBy('m.id', 'DESC');
+		} elseif ($sortOrder === IMailSearch::ORDER_OLDEST_FIRST) {
+			$select->orderBy('m.sent_at', 'ASC');
 		} else {
 			$select->orderBy('m.sent_at', 'DESC');
 		}
@@ -1258,14 +1313,22 @@ class MessageMapper extends QBMapper {
 		if ($ids === []) {
 			return [];
 		}
-		$direction = strtoupper($sortOrder) === 'DESC' ? 'DESC' : 'ASC';
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->getTableName())
 			->where(
 				$qb->expr()->in('id', $qb->createParameter('ids'))
-			)
-			->orderBy($orderBy, $direction);
+			);
+
+		if ($sortOrder === IMailSearch::ORDER_UNREAD_FIRST) {
+			$qb
+				->orderBy('flag_seen', 'ASC')
+				->addOrderBy('sent_at', 'DESC')
+				->addOrderBy('id', 'DESC');
+		} else {
+			$direction = strtoupper($sortOrder) === 'DESC' ? 'DESC' : 'ASC';
+			$qb->orderBy($orderBy, $direction);
+		}
 
 		$results = [];
 		foreach (array_chunk($ids, 1000) as $chunk) {

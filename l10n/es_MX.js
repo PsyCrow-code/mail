@@ -121,6 +121,7 @@ OC.L10N.register(
     "Sorting" : "Ordenando",
     "Newest first" : "Más reciente primero",
     "Oldest first" : "Más antiguo primero",
+    "Unread first" : "No leídos primero",
     "Manually" : "Manualmente",
     "Privacy" : "Privacidad",
     "Security" : "Seguridad",

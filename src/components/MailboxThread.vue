@@ -417,6 +417,10 @@ export default {
 		},
 
 		groupEnvelopes() {
+			if (this.sortOrder === 'unread') {
+				return []
+			}
+
 			const allEnvelopes = this.mainStore.getEnvelopes(this.mailbox.databaseId, this.query)
 			return this.getGroupedEnvelopes(allEnvelopes, this.mainStore.syncTimestamp, this.sortOrder)
 		},

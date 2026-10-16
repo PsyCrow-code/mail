@@ -38,6 +38,34 @@ describe('service/MessageService test suite', () => {
 		})
 	})
 
+	it('includes the unread cursor id without shifting the cache buster', async () => {
+		generateUrl.mockReturnValueOnce('/generated-url')
+		axios.get.mockResolvedValueOnce({ data: [] })
+
+		await MessageService.fetchEnvelopes(
+			13,
+			21,
+			undefined,
+			-300,
+			10,
+			'unread',
+			'threaded',
+			undefined,
+			105,
+		)
+
+		expect(axios.get).toHaveBeenCalledWith('/generated-url', {
+			params: {
+				mailboxId: 21,
+				limit: 10,
+				cursor: -300,
+				cursorId: 105,
+				sort: 'unread',
+				view: 'threaded',
+			},
+		})
+	})
+
 	it('should not include a cache buster by default', async () => {
 		generateUrl.mockReturnValueOnce('/generated-url')
 		axios.get.mockResolvedValueOnce({ data: [] })

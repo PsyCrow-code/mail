@@ -118,7 +118,8 @@ class MessagesController extends Controller {
 		?string $filter = null,
 		?int $limit = null,
 		?string $view = null,
-		?string $v = null): JSONResponse {
+		?string $v = null,
+		?int $cursorId = null): JSONResponse {
 		if ($this->userId === null) {
 			return new JSONResponse([], Http::STATUS_UNAUTHORIZED);
 		}
@@ -133,7 +134,12 @@ class MessagesController extends Controller {
 		}
 
 		$this->logger->debug("loading messages of mailbox <$mailboxId>");
-		$sort = $this->preferences->getPreference($this->userId, 'sort-order', 'newest') === 'newest' ? IMailSearch::ORDER_NEWEST_FIRST : IMailSearch::ORDER_OLDEST_FIRST;
+		$sortPreference = $this->preferences->getPreference($this->userId, 'sort-order', 'newest');
+		$sort = match ($sortPreference) {
+			'oldest' => IMailSearch::ORDER_OLDEST_FIRST,
+			'unread' => IMailSearch::ORDER_UNREAD_FIRST,
+			default => IMailSearch::ORDER_NEWEST_FIRST,
+		};
 
 		$view = $view === 'singleton' ? IMailSearch::VIEW_SINGLETON : IMailSearch::VIEW_THREADED;
 
@@ -145,7 +151,8 @@ class MessagesController extends Controller {
 			$cursor,
 			$limit,
 			$effectiveUserId,
-			$view
+			$view,
+			$cursorId
 		);
 
 		$response = new JSONResponse($messages);

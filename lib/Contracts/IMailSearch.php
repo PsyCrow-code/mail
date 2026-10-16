@@ -21,6 +21,7 @@ use OCP\IUser;
 interface IMailSearch {
 	public const ORDER_NEWEST_FIRST = 'DESC';
 	public const ORDER_OLDEST_FIRST = 'ASC';
+	public const ORDER_UNREAD_FIRST = 'UNREAD';
 	public const VIEW_SINGLETON = 'singleton';
 	public const VIEW_THREADED = 'threaded';
 	/**
@@ -54,7 +55,8 @@ interface IMailSearch {
 		?int $cursor,
 		?int $limit,
 		?string $userId,
-		?string $view): array;
+		?string $view,
+		?int $cursorId = null): array;
 
 	/**
 	 * Run a search through all mailboxes of a user.
