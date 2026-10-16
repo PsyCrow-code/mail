@@ -57,3 +57,34 @@ jobs:
           composer run test:integration -- \
             --no-coverage \
             --filter testFindIdsByQueryUnreadFirstCursorWithEqualTimestamps
+
+  release-tarball:
+    name: Build Mail 5.12.4 package
+    needs: cursor-integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout patched Mail
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Read Node and npm versions
+        uses: skjnldsv/read-package-engines-version-actions@06d6baf7d8f41934ab630e97d9e6c0bc9c9ac5e4
+        id: versions
+
+      - name: Set up packaging tools
+        uses: nextcloud/setup-server-action@34b73d5b0e3633f83a52227d00cc2a6c41d01d9a
+        with:
+          node-version: ${{ steps.versions.outputs.nodeVersion }}
+          npm-version: ${{ steps.versions.outputs.npmVersion }}
+          tools: 'krankerl'
+
+      - name: Build release package
+        run: krankerl package
+
+      - name: Upload installable package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mail-5.12.4-unread
+          path: build/artifacts/mail.tar.gz
+          if-no-files-found: error
+          retention-days: 7
