@@ -1,0 +1,59 @@
+name: Unread-first integration
+
+on:
+  push:
+    branches:
+      - local/unread-first-5.12.4
+
+permissions:
+  contents: read
+
+jobs:
+  cursor-integration:
+    name: Nextcloud 35 / PHP 8.4 / MariaDB
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb-service:
+        image: ghcr.io/nextcloud/continuous-integration-mariadb-11.8:latest@sha256:9232089007ddc49b42e5a7e4cc158ac373efebed6885ea0f76e3d4e5f8532bac
+        env:
+          MARIADB_ROOT_PASSWORD: my-secret-pw
+          MARIADB_DATABASE: nextcloud
+          MARIADB_USER: nextcloud
+          MARIADB_PASSWORD: nextcloud
+        ports:
+          - 3306:3306/tcp
+        options: >-
+          --health-cmd="mariadb-admin ping"
+          --health-interval=5s
+          --health-timeout=2s
+          --health-retries=5
+
+    steps:
+      - name: Set up Nextcloud 35
+        uses: nextcloud/setup-server-action@34b73d5b0e3633f83a52227d00cc2a6c41d01d9a
+        with:
+          nextcloud-version: stable35
+          php-version: '8.4'
+          install: true
+          database: mysql
+          node-version: 'false'
+
+      - name: Checkout patched Mail
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: nextcloud/apps/mail
+
+      - name: Install PHP dependencies
+        working-directory: nextcloud/apps/mail
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Enable Mail
+        run: php -f nextcloud/occ app:enable mail --force
+
+      - name: Test composite cursor pagination
+        working-directory: nextcloud/apps/mail
+        run: |
+          composer run test:integration -- \
+            --no-coverage \
+            --filter testFindIdsByQueryUnreadFirstCursorWithEqualTimestamps
