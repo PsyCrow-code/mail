@@ -503,10 +503,23 @@ class ImapMessageFetcher {
 	}
 
 	private function hasAttachments(Horde_Mime_Part $part): bool {
+		// S/MIME containers are not attachments themselves.
+		$isSmimeContainer = in_array(
+			$part->getType(),
+			['application/pkcs7-mime', 'application/x-pkcs7-mime'],
+			true
+		) && in_array(
+			$part->getContentTypeParameter('smime-type'),
+			['signed-data', 'enveloped-data'],
+			true
+		);
+
+		// A single-part MIME message may itself be the attachment.
+		if (!$isSmimeContainer && ($part->isAttachment() || $part->getType() === 'message/rfc822')) {
+			return true;
+		}
+
 		foreach ($part->getParts() as $p) {
-			if ($p->isAttachment() || $p->getType() === 'message/rfc822') {
-				return true;
-			}
 			if ($this->hasAttachments($p)) {
 				return true;
 			}
