@@ -9,11 +9,15 @@ declare(strict_types=1);
 
 namespace OCA\Mail\Tests\Integration\IMAP;
 
+use OCA\Mail\Account;
 use OCA\Mail\Db\LocalMessage;
+use OCA\Mail\Db\Mailbox;
+use OCA\Mail\Db\Message;
 use OCA\Mail\Db\MailAccount;
 use OCA\Mail\Db\SmimeCertificate;
 use OCA\Mail\Db\SmimeCertificateMapper;
 use OCA\Mail\IMAP\ImapMessageFetcherFactory;
+use OCA\Mail\IMAP\PreviewEnhancer;
 use OCA\Mail\Tests\Integration\Framework\ImapTest;
 use OCA\Mail\Tests\Integration\Framework\ImapTestAccount;
 use OCA\Mail\Tests\Integration\TestCase;
@@ -243,6 +247,115 @@ class ImapMessageFetcherIntegrationTest extends TestCase {
 		$this->assertSame('image/gif', $message->inlineAttachments[0]['mime']);
 		$this->assertTrue($message->hasHtmlMessage());
 		$this->assertStringContainsString('Hello', $message->getHtmlBody($uid));
+	}
+
+	public function testFetchMessageWithSinglePartAttachment(): void {
+		$mimeMessage = "From: debug@imap.localhost\r\n"
+			. "To: user@imap.localhost\r\n"
+			. "Subject: Single part attachment\r\n"
+			. "MIME-Version: 1.0\r\n"
+			. "Content-Type: application/pdf; name=\"document.pdf\"\r\n"
+			. "Content-Transfer-Encoding: base64\r\n"
+			. "Content-Disposition: attachment; filename=\"document.pdf\"\r\n"
+			. "\r\n"
+			. base64_encode("%PDF-1.4\nTest PDF\n")
+			. "\r\n";
+
+		$uid = $this->saveMimeMessage('INBOX', $mimeMessage);
+		$fetcher = $this->fetcherFactory
+			->build(
+				$uid,
+				'INBOX',
+				$this->getTestClient(),
+				$this->account->getUserId()
+			)
+			->withBody(true);
+
+		$message = $fetcher->fetchMessage();
+
+		$this->assertCount(1, $message->attachments);
+		$this->assertTrue($message->jsonSerialize()['flags']['hasAttachments']);
+		$this->assertSame('document.pdf', $message->attachments[0]['fileName']);
+		$this->assertSame('application/pdf', $message->attachments[0]['mime']);
+	}
+
+
+	public function testSinglePartPdfAppearsInEnvelopeAttachments(): void {
+		$mimeMessage = "From: debug@imap.localhost\r\n"
+			. "To: user@imap.localhost\r\n"
+			. "Subject: PDF envelope preview\r\n"
+			. "MIME-Version: 1.0\r\n"
+			. "Content-Type: application/pdf; name=\"document.pdf\"\r\n"
+			. "Content-Transfer-Encoding: base64\r\n"
+			. "Content-Disposition: attachment; filename=\"document.pdf\"\r\n"
+			. "\r\n"
+			. base64_encode("%PDF-1.4\nTest PDF\n")
+			. "\r\n";
+
+		$uid = $this->saveMimeMessage('INBOX', $mimeMessage);
+
+		$mailbox = new Mailbox();
+		$mailbox->setId(987654);
+		$mailbox->setName('INBOX');
+
+		$message = new Message();
+		$message->setId(987654);
+		$message->setUid($uid);
+		$message->setStructureAnalyzed(true);
+		$message->setFlagAttachments(true);
+
+		$enhancer = Server::get(PreviewEnhancer::class);
+		$result = $enhancer->process(
+			new Account($this->account),
+			$mailbox,
+			[$message],
+		);
+
+		$this->assertCount(1, $result);
+
+		$attachments = $result[0]->getAttachments();
+
+		$this->assertCount(1, $attachments);
+		$this->assertSame('1', (string)$attachments[0]['id']);
+		$this->assertSame('document.pdf', $attachments[0]['fileName']);
+		$this->assertSame('application/pdf', $attachments[0]['mime']);
+		$this->assertNotEmpty($attachments[0]['downloadUrl']);
+		$this->assertNotEmpty($attachments[0]['mimeUrl']);
+		$this->assertStringContainsString(
+			'987654',
+			$attachments[0]['downloadUrl'],
+		);
+	}
+
+	public function testFetchMessageWithSinglePartInlineImage(): void {
+		$mimeMessage = "From: debug@imap.localhost\r\n"
+			. "To: user@imap.localhost\r\n"
+			. "Subject: Single part inline image\r\n"
+			. "MIME-Version: 1.0\r\n"
+			. "Content-Type: image/jpeg; name=\"scan.jpg\"\r\n"
+			. "Content-Transfer-Encoding: base64\r\n"
+			. "Content-Disposition: inline; filename=\"scan.jpg\"\r\n"
+			. "Content-ID: <scan-image>\r\n"
+			. "\r\n"
+			. base64_encode('JPEG test data')
+			. "\r\n";
+
+		$uid = $this->saveMimeMessage('INBOX', $mimeMessage);
+		$fetcher = $this->fetcherFactory
+			->build(
+				$uid,
+				'INBOX',
+				$this->getTestClient(),
+				$this->account->getUserId()
+			)
+			->withBody(true);
+
+		$message = $fetcher->fetchMessage();
+
+		$this->assertCount(0, $message->attachments);
+		$this->assertCount(1, $message->inlineAttachments);
+		$this->assertSame('scan.jpg', $message->inlineAttachments[0]['fileName']);
+		$this->assertSame('image/jpeg', $message->inlineAttachments[0]['mime']);
 	}
 
 	public function testFetchMessageWithOpaqueSignedMessage(): void {
