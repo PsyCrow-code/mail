@@ -258,7 +258,7 @@ class AttachmentService implements IAttachmentService {
 			return [];
 		}
 
-		$cache = $this->cacheFactory->createDistributed('mail_attachment_names');
+		$cache = $this->cacheFactory->createDistributed('mail_attachment_names_mime_v2');
 
 		$cacheKey = hash('xxh128', implode('_', [
 			$account->getUserId(),
