@@ -3,7 +3,7 @@ name: Unread-first integration
 on:
   push:
     branches:
-      - local/unread-first-5.12.4
+      - local/unread-first-5.12.6
 
 permissions:
   contents: read
@@ -122,10 +122,10 @@ jobs:
         run: |
           composer run test:integration -- \
             --no-coverage \
-            --filter 'testFetchMessageWithSinglePartAttachment|testSinglePartPdfAppearsInEnvelopeAttachments|testFetchMessageWithSinglePartInlineImage|testFetchMessageWithOpaqueSignedMessage'
+            --filter 'testFetchMessageWithSinglePartAttachment|testSinglePartPdfAppearsInEnvelopeAttachments|testFetchMessageWithSinglePartInlineImage|testFetchMessageWithOpaqueSignedMessage|testFetchMessageWithoutBody'
 
   release-tarball:
-    name: Build Mail 5.12.4 package
+    name: Build Mail 5.12.6 package
     needs: [cursor-integration, mime-integration]
     runs-on: ubuntu-latest
 
@@ -150,7 +150,7 @@ jobs:
       - name: Upload installable package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: mail-5.12.4-unread
+          name: mail-5.12.6-unread
           path: build/artifacts/mail.tar.gz
           if-no-files-found: error
           retention-days: 7

@@ -220,7 +220,6 @@ class ImapMessageFetcher {
 					// This handles the special case of a mail which only
 					// content is an attached file
 					$this->getPart($structure, '1', $isEncrypted || $isSigned);
-					$this->hasAnyAttachment = true;
 				}
 			}
 		} elseif (is_null($fetch)) {
@@ -517,7 +516,15 @@ class ImapMessageFetcher {
 		);
 
 		// A single-part MIME message may itself be the attachment.
-		if (!$isSmimeContainer && ($part->isAttachment() || $part->getType() === 'message/rfc822')) {
+		// Cryptographic signature parts are not user attachments.
+		$isSignature = in_array(
+			$part->getType(),
+			['application/pgp-signature', 'application/pkcs7-signature', 'application/x-pkcs7-signature'],
+			true
+		);
+
+		if (!$isSmimeContainer && !$isSignature
+			&& ($part->isAttachment() || $part->getType() === 'message/rfc822')) {
 			return true;
 		}
 

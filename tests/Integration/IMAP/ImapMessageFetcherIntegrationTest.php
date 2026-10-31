@@ -356,6 +356,7 @@ class ImapMessageFetcherIntegrationTest extends TestCase {
 		$this->assertCount(1, $message->inlineAttachments);
 		$this->assertSame('scan.jpg', $message->inlineAttachments[0]['fileName']);
 		$this->assertSame('image/jpeg', $message->inlineAttachments[0]['mime']);
+		$this->assertFalse($message->jsonSerialize()['flags']['hasAttachments']);
 	}
 
 	public function testFetchMessageWithOpaqueSignedMessage(): void {
@@ -372,6 +373,7 @@ class ImapMessageFetcherIntegrationTest extends TestCase {
 
 		$message = $fetcher->fetchMessage();
 
+		$this->assertFalse($message->jsonSerialize()['flags']['hasAttachments']);
 		$this->assertEquals(self::LOREM . "\n", $message->getPlainBody());
 		$this->assertFalse($message->isEncrypted());
 		$this->assertTrue($message->isSigned());
