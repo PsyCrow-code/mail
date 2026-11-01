@@ -10,8 +10,12 @@ permissions:
 
 jobs:
   cursor-integration:
-    name: Nextcloud 35 / PHP 8.4 / MariaDB
+    name: Nextcloud 35 / PHP ${{ matrix.php }} / MariaDB
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
 
     services:
       mariadb-service:
@@ -34,7 +38,7 @@ jobs:
         uses: nextcloud/setup-server-action@34b73d5b0e3633f83a52227d00cc2a6c41d01d9a
         with:
           nextcloud-version: stable35
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           install: true
           database: mysql
           node-version: 'false'
@@ -59,8 +63,12 @@ jobs:
             --filter testFindIdsByQueryUnreadFirstCursorWithEqualTimestamps
 
   mime-integration:
-    name: Nextcloud 35 / PHP 8.4 / Dovecot MIME
+    name: Nextcloud 35 / PHP ${{ matrix.php }} / Dovecot MIME
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
 
     services:
       mail-dovecot-service:
@@ -95,7 +103,7 @@ jobs:
         uses: nextcloud/setup-server-action@34b73d5b0e3633f83a52227d00cc2a6c41d01d9a
         with:
           nextcloud-version: stable35
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           install: true
           database: mysql
           node-version: 'false'
