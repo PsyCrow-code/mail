@@ -76,7 +76,8 @@ class MailSearch implements IMailSearch {
 		?int $cursor,
 		?int $limit,
 		?string $userId,
-		?string $view): array {
+		?string $view,
+		?int $cursorId = null): array {
 		if ($mailbox->hasLocks($this->timeFactory->getTime())) {
 			throw MailboxLockedException::from($mailbox);
 		}
@@ -87,6 +88,9 @@ class MailSearch implements IMailSearch {
 		$query = $this->filterStringParser->parse($filter);
 		if ($cursor !== null) {
 			$query->setCursor($cursor);
+			if ($sortOrder === self::ORDER_UNREAD_FIRST && $cursorId !== null) {
+				$query->setCursorId($cursorId);
+			}
 		}
 		if ($view !== null) {
 			$query->setThreaded($view === self::VIEW_THREADED);

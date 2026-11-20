@@ -258,7 +258,7 @@ class AttachmentService implements IAttachmentService {
 			return [];
 		}
 
-		$cache = $this->cacheFactory->createDistributed('mail_attachment_names');
+		$cache = $this->cacheFactory->createDistributed('mail_attachment_names_mime_v3');
 
 		$cacheKey = hash('xxh128', implode('_', [
 			$account->getUserId(),
@@ -270,7 +270,7 @@ class AttachmentService implements IAttachmentService {
 		$cached = $cache->get($cacheKey);
 		if (is_array($cached)) {
 			/** @var list<array{id: string, fileName: string|null, mime: string, downloadUrl: string, mimeUrl: string}> $cached */
-			return $cached;
+			return $this->usePdfIconsForGenericAttachments($cached);
 		}
 
 		$attachments = [];
@@ -298,8 +298,29 @@ class AttachmentService implements IAttachmentService {
 			return ['id' => $attachment['id'], 'fileName' => $attachment['fileName'], 'mime' => $attachment['mime'], 'downloadUrl' => $downloadUrl, 'mimeUrl' => $mimeUrl];
 		}, $attachments));
 
+		$result = $this->usePdfIconsForGenericAttachments($result);
 		$cache->set($cacheKey, $result, 604800);
 		return $result;
+	}
+
+
+	/**
+	 * Correct PDF icons for generic MIME attachments, including cached entries.
+	 * Uses metadata only; attachment contents are never fetched for icons.
+	 *
+	 * @param list<array{id: string, fileName: string|null, mime: string, downloadUrl: string, mimeUrl: string}> $attachments
+	 * @return list<array{id: string, fileName: string|null, mime: string, downloadUrl: string, mimeUrl: string}>
+	 */
+	private function usePdfIconsForGenericAttachments(array $attachments): array {
+		foreach ($attachments as &$attachment) {
+			if ($attachment['mime'] === 'application/octet-stream'
+				&& preg_match('/\.pdf$/i', $attachment['fileName'] ?? '') === 1) {
+				$attachment['mimeUrl'] = $this->mimeTypeDetector->mimeTypeIcon('application/pdf');
+			}
+		}
+		unset($attachment);
+
+		return $attachments;
 	}
 
 	/**

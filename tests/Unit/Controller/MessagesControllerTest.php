@@ -222,6 +222,59 @@ class MessagesControllerTest extends TestCase {
 		$this->assertFalse($method->invoke($this->controller, ['mime' => 'text/plain', 'fileName' => 'event.ics']));
 	}
 
+	public function testPdfIconForGenericMimeAttachment(): void {
+		$this->urlGenerator->method('linkToRouteAbsolute')->willReturn('/attachment/2');
+		$this->mimeTypeDetector->expects($this->once())
+			->method('mimeTypeIcon')
+			->with('application/pdf')
+			->willReturn('/pdf.svg');
+
+		$method = new \ReflectionMethod(MessagesController::class, 'enrichAttachment');
+		$result = $method->invoke($this->controller, 123, [
+			'id' => '2',
+			'fileName' => 'invoice.PDF',
+			'mime' => 'application/octet-stream',
+		]);
+
+		$this->assertSame('/pdf.svg', $result['mimeUrl']);
+		$this->assertSame('application/octet-stream', $result['mime']);
+		$this->assertSame('/attachment/2', $result['downloadUrl']);
+	}
+
+	public function testGenericNonPdfAttachmentKeepsGenericIcon(): void {
+		$this->urlGenerator->method('linkToRouteAbsolute')->willReturn('/attachment/3');
+		$this->mimeTypeDetector->expects($this->once())
+			->method('mimeTypeIcon')
+			->with('application/octet-stream')
+			->willReturn('/generic.svg');
+
+		$method = new \ReflectionMethod(MessagesController::class, 'enrichAttachment');
+		$result = $method->invoke($this->controller, 123, [
+			'id' => '3',
+			'fileName' => 'invoice.xml',
+			'mime' => 'application/octet-stream',
+		]);
+
+		$this->assertSame('/generic.svg', $result['mimeUrl']);
+	}
+
+	public function testExplicitNonPdfMimeIsNotOverriddenByExtension(): void {
+		$this->urlGenerator->method('linkToRouteAbsolute')->willReturn('/attachment/4');
+		$this->mimeTypeDetector->expects($this->once())
+			->method('mimeTypeIcon')
+			->with('text/plain')
+			->willReturn('/text.svg');
+
+		$method = new \ReflectionMethod(MessagesController::class, 'enrichAttachment');
+		$result = $method->invoke($this->controller, 123, [
+			'id' => '4',
+			'fileName' => 'invoice.pdf',
+			'mime' => 'text/plain',
+		]);
+
+		$this->assertSame('/text.svg', $result['mimeUrl']);
+	}
+
 	private function assertCachedFor(Response $response, int $seconds): void {
 		$headers = $response->getHeaders();
 
@@ -325,19 +378,11 @@ class MessagesControllerTest extends TestCase {
 		$this->mailManager->expects($this->once())
 			->method('getMailAttachment')
 			->with($this->account, $mailbox, $message, $attachmentId)
-			->willReturn($this->attachment);
+			->willReturn(new Attachment($attachmentId, $name, $type, $contents, strlen($contents), null, null));
 		$this->accountService->expects($this->once())
 			->method('find')
 			->with($this->userId, $accountId)
 			->willReturn($this->account);
-		$this->attachment->expects($this->once())
-			->method('getContent')
-			->willReturn($contents);
-		$this->attachment->method('getName')
-			->willReturn($name);
-		$this->attachment->expects($this->once())
-			->method('getType')
-			->willReturn($type);
 	}
 
 	public function testDownloadAttachment(): void {
@@ -350,6 +395,45 @@ class MessagesControllerTest extends TestCase {
 		$this->assertSame($expected->getHeaders()['Content-Disposition'], $response->getHeaders()['Content-Disposition']);
 		$this->assertSame($expected->getHeaders()['Content-Type'], $response->getHeaders()['Content-Type']);
 		$this->assertCachedFor($response, 60 * 60);
+	}
+
+	public function testPreviewGenericMimePdfAttachment(): void {
+		$this->request->method('getParam')->with('pdfPreview', '')->willReturn('1');
+		$this->mockAttachmentDownload(123, '3', "%PDF-1.4\ncontent", 'invoice.pdf', 'application/octet-stream');
+
+		$response = $this->controller->downloadAttachment(123, '3');
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame('application/octet-stream', $response->getHeaders()['Content-Type']);
+		$this->assertSame("%PDF-1.4\ncontent", $response->render());
+	}
+
+	public function testPreviewRejectsFakePdfAttachment(): void {
+		$this->request->method('getParam')->with('pdfPreview', '')->willReturn('1');
+		$this->mockAttachmentDownload(123, '3', 'not a pdf', 'invoice.pdf', 'application/octet-stream');
+
+		$response = $this->controller->downloadAttachment(123, '3');
+
+		$this->assertSame(Http::STATUS_UNSUPPORTED_MEDIA_TYPE, $response->getStatus());
+	}
+
+	public function testPreviewRejectsExplicitlyTypedAttachment(): void {
+		$this->request->method('getParam')->with('pdfPreview', '')->willReturn('1');
+		$this->mockAttachmentDownload(123, '3', "%PDF-1.4\ncontent", 'invoice.pdf', 'text/plain');
+
+		$response = $this->controller->downloadAttachment(123, '3');
+
+		$this->assertSame(Http::STATUS_UNSUPPORTED_MEDIA_TYPE, $response->getStatus());
+	}
+
+	public function testNormalDownloadDoesNotValidatePdfHeader(): void {
+		$this->mockAttachmentDownload(123, '3', 'not a pdf', 'invoice.pdf', 'application/octet-stream');
+
+		$response = $this->controller->downloadAttachment(123, '3');
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame('not a pdf', $response->render());
+		$this->assertSame('application/octet-stream', $response->getHeaders()['Content-Type']);
 	}
 
 	public function testDownloadEmbeddedMessageAttachment(): void {

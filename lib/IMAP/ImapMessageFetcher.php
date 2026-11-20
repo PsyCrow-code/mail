@@ -220,7 +220,6 @@ class ImapMessageFetcher {
 					// This handles the special case of a mail which only
 					// content is an attached file
 					$this->getPart($structure, '1', $isEncrypted || $isSigned);
-					$this->hasAnyAttachment = true;
 				}
 			}
 		} elseif (is_null($fetch)) {
@@ -331,8 +330,19 @@ class ImapMessageFetcher {
 			}
 		}
 
+		// Some senders label CID-referenced inline PNG/JPEG/GIF/WebP images as
+		// application/octet-stream. Do not classify those as regular attachments.
+		// Require both an inline disposition and a CID to avoid hiding downloads.
+		$isCidInlineImage = $p->getDisposition() === 'inline'
+			&& $p->getContentId() !== null
+			&& (
+				str_starts_with($p->getType(), 'image/')
+				|| ($p->getType() === 'application/octet-stream'
+					&& preg_match('/\.(?:png|jpe?g|gif|webp)$/i', $p->getName() ?? '') === 1)
+			);
 		$isAttachment = ($p->isAttachment() || $p->getType() === 'message/rfc822')
-			&& !in_array($p->getType(), ['application/pgp-signature', 'application/pkcs7-signature', 'application/x-pkcs7-signature']);
+			&& !in_array($p->getType(), ['application/pgp-signature', 'application/pkcs7-signature', 'application/x-pkcs7-signature'])
+			&& !$isCidInlineImage;
 
 		// Regular attachments
 		if ($isAttachment) {
@@ -505,10 +515,31 @@ class ImapMessageFetcher {
 	}
 
 	private function hasAttachments(Horde_Mime_Part $part): bool {
+		// S/MIME containers are not attachments themselves.
+		$isSmimeContainer = in_array(
+			$part->getType(),
+			['application/pkcs7-mime', 'application/x-pkcs7-mime'],
+			true
+		) && in_array(
+			$part->getContentTypeParameter('smime-type'),
+			['signed-data', 'enveloped-data'],
+			true
+		);
+
+		// A single-part MIME message may itself be the attachment.
+		// Cryptographic signature parts are not user attachments.
+		$isSignature = in_array(
+			$part->getType(),
+			['application/pgp-signature', 'application/pkcs7-signature', 'application/x-pkcs7-signature'],
+			true
+		);
+
+		if (!$isSmimeContainer && !$isSignature
+			&& ($part->isAttachment() || $part->getType() === 'message/rfc822')) {
+			return true;
+		}
+
 		foreach ($part->getParts() as $p) {
-			if ($p->isAttachment() || $p->getType() === 'message/rfc822') {
-				return true;
-			}
 			if ($this->hasAttachments($p)) {
 				return true;
 			}

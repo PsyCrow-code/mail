@@ -120,7 +120,8 @@ class MessagesController extends Controller {
 		?string $filter = null,
 		?int $limit = null,
 		?string $view = null,
-		?string $v = null): JSONResponse {
+		?string $v = null,
+		?int $cursorId = null): JSONResponse {
 		if ($this->userId === null) {
 			return new JSONResponse([], Http::STATUS_UNAUTHORIZED);
 		}
@@ -135,7 +136,12 @@ class MessagesController extends Controller {
 		}
 
 		$this->logger->debug("loading messages of mailbox <$mailboxId>");
-		$sort = $this->preferences->getPreference($this->userId, 'sort-order', 'newest') === 'newest' ? IMailSearch::ORDER_NEWEST_FIRST : IMailSearch::ORDER_OLDEST_FIRST;
+		$sortPreference = $this->preferences->getPreference($this->userId, 'sort-order', 'newest');
+		$sort = match ($sortPreference) {
+			'oldest' => IMailSearch::ORDER_OLDEST_FIRST,
+			'unread' => IMailSearch::ORDER_UNREAD_FIRST,
+			default => IMailSearch::ORDER_NEWEST_FIRST,
+		};
 
 		$view = $view === 'singleton' ? IMailSearch::VIEW_SINGLETON : IMailSearch::VIEW_THREADED;
 
@@ -147,7 +153,8 @@ class MessagesController extends Controller {
 			$cursor,
 			$limit,
 			$effectiveUserId,
-			$view
+			$view,
+			$cursorId
 		);
 
 		$response = new JSONResponse($messages);
@@ -785,11 +792,52 @@ class MessagesController extends Controller {
 		}
 
 		$content = $attachment->getContent();
+		$attachmentType = $attachment->getType();
+
+		// Validate generic MIME PDF previews only when requested.
+		if ($this->request->getParam('pdfPreview', '') === '1'
+			&& ($attachmentType !== 'application/octet-stream'
+				|| preg_match('/\.pdf$/i', $attachmentName) !== 1
+				|| !str_starts_with($content, '%PDF-'))) {
+			return new JSONResponse([], Http::STATUS_UNSUPPORTED_MEDIA_TYPE);
+		}
+
+		// Embedded images referenced by CID should be served as images even when
+		// the sender mistakenly labels them application/octet-stream.
+		// The preceding PDF preview validation remains unchanged.
+		$responseContentType = $attachmentType;
+		$isCidInlineImage = $attachment->disposition === 'inline'
+			&& $attachment->contentId !== null;
+
+		if ($isCidInlineImage && $attachmentType === 'application/octet-stream') {
+			$safeImageTypes = [
+				'png' => 'image/png',
+				'jpg' => 'image/jpeg',
+				'jpeg' => 'image/jpeg',
+				'gif' => 'image/gif',
+				'webp' => 'image/webp',
+			];
+			$extension = strtolower(pathinfo($attachmentName, PATHINFO_EXTENSION));
+			$expectedMime = $safeImageTypes[$extension] ?? null;
+			if ($expectedMime !== null && $content !== '') {
+				$detectedMime = (new \finfo(FILEINFO_MIME_TYPE))->buffer($content);
+				if ($detectedMime === $expectedMime) {
+					$responseContentType = $expectedMime;
+				}
+			}
+		}
+
 		$response = new AttachmentDownloadResponse(
 			$content,
 			$attachmentName,
-			$attachment->getType()
+			$responseContentType
 		);
+		// Allow actual inline CID images to render without relaxing CSP.
+		if ($isCidInlineImage && in_array($responseContentType, [
+			'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+		], true)) {
+			$response->addHeader('Content-Disposition', 'inline');
+		}
 
 		if ($content !== '') {
 			$response->cacheFor(60 * 60, false, true);
@@ -937,6 +985,16 @@ class MessagesController extends Controller {
 			$account = $this->accountService->find($effectiveUserId, $mailbox->getAccountId());
 		} catch (DoesNotExistException $e) {
 			return new JSONResponse([], Http::STATUS_FORBIDDEN);
+		}
+
+		// Process HAM reporting before moving the message out of Junk.
+		if (
+			array_key_exists('$junk', $flags)
+			&& array_key_exists('$notjunk', $flags)
+			&& !filter_var($flags['$junk'], FILTER_VALIDATE_BOOLEAN)
+			&& filter_var($flags['$notjunk'], FILTER_VALIDATE_BOOLEAN)
+		) {
+			$flags = ['$notjunk' => $flags['$notjunk']] + $flags;
 		}
 
 		$flagChanges = [];
@@ -1101,7 +1159,14 @@ class MessagesController extends Controller {
 			'attachmentId' => $attachment['id'],
 		]);
 		$attachment['downloadUrl'] = $downloadUrl;
-		$attachment['mimeUrl'] = $this->mimeTypeDetector->mimeTypeIcon($attachment['mime']);
+				// Use the PDF icon for generic MIME attachments named .pdf without fetching their contents.
+		// Keep the original MIME type and download URL unchanged.
+		$iconMime = $attachment['mime'];
+		if ($iconMime === 'application/octet-stream'
+			&& preg_match('/\.pdf$/i', $attachment['fileName'] ?? '') === 1) {
+			$iconMime = 'application/pdf';
+		}
+		$attachment['mimeUrl'] = $this->mimeTypeDetector->mimeTypeIcon($iconMime);
 
 		$attachment['isImage'] = $this->attachmentIsImage($attachment);
 		$attachment['isCalendarEvent'] = $this->attachmentIsCalendarEvent($attachment);

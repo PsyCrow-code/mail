@@ -104,7 +104,22 @@ class TransformURLScheme extends HTMLPurifier_URIFilter {
 	}
 
 	private function replaceCidWithUrl(HTMLPurifier_URI $uri): HTMLPurifier_URI {
+		// Preserve exact CID matching as the first choice.
 		$inlineAttachment = array_find($this->inlineAttachments, static fn ($attachment) => $attachment['cid'] === $uri->path);
+
+		// Some senders append an extra apostrophe to the HTML CID reference.
+		// Only remove it when the corrected CID matches an actual attachment.
+		if ($inlineAttachment === null) {
+			$decodedCid = rawurldecode($uri->path);
+
+			if (str_ends_with($decodedCid, "'")) {
+				$normalizedCid = substr($decodedCid, 0, -1);
+				$inlineAttachment = array_find(
+					$this->inlineAttachments,
+					static fn ($attachment) => $attachment['cid'] === $normalizedCid
+				);
+			}
+		}
 
 		if ($inlineAttachment === null) {
 			return $uri;

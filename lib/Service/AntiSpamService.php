@@ -128,6 +128,21 @@ class AntiSpamService {
 				$attachmentMessage->getUid(),
 				$userId
 			);
+
+			// ASCI: reintentar lectura RAW cuando la lectura normal esté vacía.
+			if ($fullText === null || trim($fullText) === '') {
+				$fullText = $this->messageMapper->getFullText(
+					$client,
+					$mailbox->getName(),
+					$attachmentMessage->getUid(),
+					$userId,
+					false
+				);
+			}
+
+			if ($fullText === null || trim($fullText) === '') {
+				throw new ServiceException('Could not retrieve reported message source');
+			}
 		} finally {
 			$client->logout();
 		}

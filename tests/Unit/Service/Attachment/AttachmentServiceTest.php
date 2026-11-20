@@ -644,6 +644,42 @@ class AttachmentServiceTest extends TestCase {
 		$this->assertSame($cached, $result);
 	}
 
+	public function testGetAttachmentNamesCacheHitCorrectsGenericPdfIcon(): void {
+		$account = $this->createConfiguredMock(Account::class, ['getUserId' => 'user1', 'getId' => 1]);
+		$mailbox = new Mailbox();
+		$mailbox->setId(2);
+		$message = new Message();
+		$message->setUid(3);
+		$client = $this->createStub(Horde_Imap_Client_Socket::class);
+		$cached = [['id' => '1.2', 'fileName' => 'invoice.PDF', 'mime' => 'application/octet-stream', 'downloadUrl' => '/download', 'mimeUrl' => '/generic-icon']];
+		$this->cache->expects(self::once())->method('get')->willReturn($cached);
+		$this->mailManager->expects(self::never())->method('getImapMessage');
+		$this->mimeTypeDetector->expects(self::once())->method('mimeTypeIcon')->with('application/pdf')->willReturn('/pdf-icon');
+
+		$result = $this->service->getAttachmentNames($account, $mailbox, $message, $client);
+
+		$this->assertSame('/pdf-icon', $result[0]['mimeUrl']);
+		$this->assertSame('application/octet-stream', $result[0]['mime']);
+		$this->assertSame('/download', $result[0]['downloadUrl']);
+	}
+
+	public function testGetAttachmentNamesCacheHitDoesNotChangeGenericXmlIcon(): void {
+		$account = $this->createConfiguredMock(Account::class, ['getUserId' => 'user1', 'getId' => 1]);
+		$mailbox = new Mailbox();
+		$mailbox->setId(2);
+		$message = new Message();
+		$message->setUid(3);
+		$client = $this->createStub(Horde_Imap_Client_Socket::class);
+		$cached = [['id' => '1.3', 'fileName' => 'invoice.xml', 'mime' => 'application/octet-stream', 'downloadUrl' => '/download', 'mimeUrl' => '/generic-icon']];
+		$this->cache->expects(self::once())->method('get')->willReturn($cached);
+		$this->mailManager->expects(self::never())->method('getImapMessage');
+		$this->mimeTypeDetector->expects(self::never())->method('mimeTypeIcon');
+
+		$result = $this->service->getAttachmentNames($account, $mailbox, $message, $client);
+
+		$this->assertSame($cached, $result);
+	}
+
 	public function testGetAttachmentNamesEarlyExitNoAttachments(): void {
 		// Arrange
 		$account = $this->createConfiguredMock(Account::class, ['getUserId' => 'user1', 'getId' => 1]);
@@ -711,6 +747,34 @@ class AttachmentServiceTest extends TestCase {
 		$this->assertCount(1, $result);
 		$this->assertSame('1.2', $result[0]['id']);
 		$this->assertSame('file.pdf', $result[0]['fileName']);
+	}
+
+	public function testGetAttachmentNamesCacheMissStoresPdfIconForGenericMime(): void {
+		$account = $this->createConfiguredMock(Account::class, ['getUserId' => 'user1', 'getId' => 1]);
+		$mailbox = new Mailbox();
+		$mailbox->setId(2);
+		$message = new Message();
+		$message->setUid(3);
+		$message->setId(99);
+		$client = $this->createStub(Horde_Imap_Client_Socket::class);
+		$imapMessage = $this->createMock(IMAPMessage::class);
+		$this->cache->expects(self::once())->method('get')->willReturn(null);
+		$this->mailManager->expects(self::once())->method('getImapMessage')->with($client, $account, $mailbox, 3, true)->willReturn($imapMessage);
+		$imapMessage->expects(self::once())->method('getAttachments')->willReturn([
+			['id' => '1.2', 'fileName' => 'invoice.pdf', 'mime' => 'application/octet-stream'],
+		]);
+		$this->urlGenerator->method('linkToRouteAbsolute')->willReturn('/download');
+		$this->mimeTypeDetector->method('mimeTypeIcon')->willReturnCallback(static fn (string $mime): string => '/icon/' . $mime);
+		$this->cache->expects(self::once())->method('set')->with(
+			self::anything(),
+			self::callback(static fn (array $attachments): bool => $attachments[0]['mimeUrl'] === '/icon/application/pdf'),
+			604800,
+		);
+
+		$result = $this->service->getAttachmentNames($account, $mailbox, $message, $client);
+
+		$this->assertSame('/icon/application/pdf', $result[0]['mimeUrl']);
+		$this->assertSame('application/octet-stream', $result[0]['mime']);
 	}
 
 	public function testGetAttachmentNamesCacheMissNoAttachments(): void {
