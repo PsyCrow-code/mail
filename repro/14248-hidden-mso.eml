@@ -1,0 +1,36 @@
+From: "CSS Repro Fixture" <sender@example.invalid>
+To: "Test Recipient" <recipient@example.invalid>
+Date: Sat, 21 Nov 2026 12:00:00 -0600
+Subject: Nextcloud Mail #14248 - hidden MSO conditional CSS
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 12px; }
+  p { font-size: 16px; }
+</style>
+<!--[if mso]>
+<style>
+  table td { font-size: 1px; line-height: 1px; }
+</style>
+<![endif]-->
+</head>
+<body>
+  <h2>Sample account notice</h2>
+  <p>This is a synthetic email. No private data or real bank details are included.</p>
+  <table role="presentation">
+    <tr><td>
+      <p>Reference DEMO-042</p>
+      <p>Status: Available</p>
+      <p>Text should remain legible, with normal line spacing.</p>
+    </td></tr>
+    <tr><td><p>Additional details are shown in this row.</p></td></tr>
+  </table>
+</body>
+</html>
